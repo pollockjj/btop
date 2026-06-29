@@ -584,6 +584,25 @@ namespace Runner {
 					}
 				}
 			#endif
+				//? COMFY LOG TAILS
+				if (Comfy::shown != 0) {
+					try {
+						if (Global::debug) debug_timer("comfy", collect_begin);
+
+						if (not pause_output) {
+							for (unsigned long i = 0; i < static_cast<unsigned long>(Comfy::shown); ++i) {
+								const auto& tail = Comfy::collect(i, conf.no_update);
+								output += Comfy::draw(tail, i, conf.force_redraw, conf.no_update);
+							}
+						}
+
+						if (Global::debug) debug_timer("comfy", draw_done);
+					}
+					catch (const std::exception& e) {
+						throw std::runtime_error("Comfy:: -> " + string{e.what()});
+					}
+				}
+
 				//? MEM
 				if (v_contains(conf.boxes, "mem")) {
 					try {
@@ -1096,7 +1115,9 @@ static auto configure_tty_mode(std::optional<bool> force_tty) {
 
 	//? Print out box outlines
 	const bool term_sync = Config::getB("terminal_sync");
-	cout << (term_sync ? Term::sync_start : "") << Cpu::box << Mem::box << Net::box << Proc::box << (term_sync ? Term::sync_end : "") << flush;
+	string comfy_boxes;
+	for (const auto& box : Comfy::box) comfy_boxes += box;
+	cout << (term_sync ? Term::sync_start : "") << Cpu::box << comfy_boxes << Mem::box << Net::box << Proc::box << (term_sync ? Term::sync_end : "") << flush;
 
 
 	//? ------------------------------------------------ MAIN LOOP ----------------------------------------------------

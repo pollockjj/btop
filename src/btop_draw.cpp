@@ -1219,6 +1219,70 @@ namespace Gpu {
 }
 #endif
 
+namespace Comfy {
+	int width = 45, total_height = 0;
+	int min_width = 36, min_height = 6;
+	vector<int> x_vec = {}, y_vec = {}, height_vec = {};
+	vector<bool> redraw = {};
+	int shown = 0;
+	vector<int> shown_panels = {};
+	vector<string> box = {};
+
+	namespace {
+		[[nodiscard]] string color_for(ComfyTail::Severity severity) {
+			switch (severity) {
+				case ComfyTail::Severity::Fatal:
+					return Theme::c("hi_fg") + Fx::b;
+				case ComfyTail::Severity::Triage:
+					return Theme::c("title");
+				case ComfyTail::Severity::Marker:
+					return Theme::c("proc_misc");
+				case ComfyTail::Severity::Noise:
+					return Theme::c("inactive_fg");
+				case ComfyTail::Severity::Normal:
+					return Theme::c("main_fg");
+			}
+			return Theme::c("main_fg");
+		}
+	}
+
+	string draw(const ComfyTail::Snapshot& snapshot, unsigned long index, bool force_redraw, bool data_same) {
+		if (Runner::stopping) return "";
+		if (index >= box.size()) return "";
+		if (force_redraw) redraw[index] = true;
+
+		auto& x = x_vec[index];
+		auto& y = y_vec[index];
+		auto& height = height_vec[index];
+		const int inner_width = max(1, width - 2);
+		const int inner_height = max(1, height - 2);
+
+		string out;
+		out.reserve(width * height);
+		if (redraw[index]) out += box[index];
+
+		for (int row = 0; row < inner_height; row++) {
+			string text;
+			string color = Theme::c("main_fg");
+			if (snapshot.lines.empty()) {
+				if (row == 0) {
+					text = snapshot.status.empty() ? "waiting for log lines" : snapshot.status;
+					color = Theme::c("inactive_fg");
+				}
+			}
+			else if (row < static_cast<int>(snapshot.lines.size())) {
+				text = snapshot.lines[row].text;
+				color = color_for(snapshot.lines[row].severity);
+			}
+			out += Mv::to(y + row + 1, x + 1) + color + ljust(text, inner_width, true, false) + Fx::ub;
+		}
+
+		redraw[index] = false;
+		(void)data_same;
+		return out + Fx::reset;
+	}
+}
+
 namespace Mem {
 	int width_p = 45, height_p = 40;
 	int min_width = 36, min_height = 10;
@@ -2258,6 +2322,7 @@ namespace Draw {
 		Mem::box.clear();
 		Net::box.clear();
 		Proc::box.clear();
+		Comfy::box.clear();
 		Global::clock.clear();
 		Global::overlay.clear();
 		Runner::pause_output = false;
@@ -2275,6 +2340,13 @@ namespace Draw {
 		Cpu::width = Mem::width = Net::width = Proc::width = 0;
 		Cpu::height = Mem::height = Net::height = Proc::height = 0;
 		Cpu::redraw = Mem::redraw = Net::redraw = Proc::redraw = true;
+		Comfy::width = Term::width;
+		Comfy::total_height = 0;
+		Comfy::shown_panels.clear();
+		Comfy::x_vec.clear();
+		Comfy::y_vec.clear();
+		Comfy::height_vec.clear();
+		Comfy::redraw.clear();
 
 		Cpu::shown = boxes.contains("cpu");
 	#ifdef GPU_SUPPORT
@@ -2299,6 +2371,17 @@ namespace Draw {
 			total_height += 4 + gpu_b_height_offsets[shown_panels[i]];
 		}
 	#endif
+		{
+			std::istringstream iss(boxes, std::istringstream::in);
+			string current;
+			while (iss >> current) {
+				if (current.starts_with("comfy"))
+					Comfy::shown_panels.push_back(current.back()-'0');
+			}
+		}
+		Comfy::shown = Comfy::shown_panels.size();
+		const int comfy_requested_height = clamp(Config::getI("comfy_tail_height"), Comfy::min_height, 40);
+		Comfy::total_height = Comfy::shown * comfy_requested_height;
 		Mem::shown = boxes.contains("mem");
 		Net::shown = boxes.contains("net");
 		Proc::shown = boxes.contains("proc");
@@ -2315,16 +2398,21 @@ namespace Draw {
 		#endif
             const bool show_temp = (Config::getB("check_temp") and got_sensors);
 			width = round((double)Term::width * width_p / 100);
-		#ifdef GPU_SUPPORT
-			if (Gpu::shown != 0 and not (Mem::shown or Net::shown or Proc::shown)) {
-				height = Term::height - Gpu::total_height - gpus_extra_height;
+	#ifdef GPU_SUPPORT
+			if ((Gpu::shown != 0 or Comfy::shown != 0) and not (Mem::shown or Net::shown or Proc::shown)) {
+				height = Term::height - Gpu::total_height - Comfy::total_height - gpus_extra_height;
 			} else {
 				height = max(8, (int)ceil((double)Term::height * (trim(boxes) == "cpu" ? 100 : height_p/(Gpu::shown+1) + (Gpu::shown != 0)*5) / 100));
 			}
 			if (height <= Term::height-gpus_extra_height) height += gpus_extra_height;
-		#else
-			height = max(8, (int)ceil((double)Term::height * (trim(boxes) == "cpu" ? 100 : height_p) / 100));
-		#endif
+	#else
+			if (Comfy::shown != 0 and not (Mem::shown or Net::shown or Proc::shown)) {
+				height = Term::height - Comfy::total_height;
+			} else {
+				height = max(8, (int)ceil((double)Term::height * (trim(boxes) == "cpu" ? 100 : height_p) / 100));
+			}
+	#endif
+			height = max(min_height, height);
 			x = 1;
 			y = cpu_bottom ? Term::height - height + 1 : 1;
 
@@ -2397,11 +2485,11 @@ namespace Draw {
 				int height = 0;
 				width = Term::width;
 				if (Cpu::shown)
-					if (not (Mem::shown or Net::shown or Proc::shown))
+					if (not (Mem::shown or Net::shown or Proc::shown or Comfy::shown))
 						height = min_height;
 					else height = Cpu::height;
 				else
-					if (not (Mem::shown or Net::shown or Proc::shown))
+					if (not (Mem::shown or Net::shown or Proc::shown or Comfy::shown))
 						height = (Term::height - total_height) / (Gpu::shown - i) + (i == 0) * ((Term::height - total_height) % (Gpu::shown - i));
 					else
 						height = max(min_height, (int)ceil((double)Term::height * height_p/Gpu::shown / 100));
@@ -2427,6 +2515,41 @@ namespace Draw {
 		}
 	#endif
 
+		//* Calculate and draw comfy log tail box outlines
+		if (Comfy::shown != 0) {
+			using namespace Comfy;
+			x_vec.resize(shown); y_vec.resize(shown);
+			height_vec.resize(shown);
+			box.resize(shown);
+			redraw.resize(shown);
+
+			int gpu_height = 0;
+		#ifdef GPU_SUPPORT
+			gpu_height = Gpu::total_height;
+		#endif
+			const bool has_lower = Mem::shown or Net::shown or Proc::shown;
+			const bool has_upper = Cpu::shown or gpu_height > 0;
+			const int lower_min = Proc::shown ? Proc::min_height : (Mem::shown ? Mem::min_height : 0) + (Net::shown ? Net::min_height : 0);
+			const int available = max(shown * min_height, Term::height - Cpu::height - gpu_height - (has_lower ? lower_min : 0));
+			int desired_total = shown * comfy_requested_height;
+			if (not has_upper and not has_lower) desired_total = Term::height;
+			total_height = clamp(desired_total, shown * min_height, available);
+
+			int used_height = 0;
+			width = Term::width;
+			for (auto i = 0; i < shown; i++) {
+				redraw[i] = true;
+				height_vec[i] = total_height / shown + (i < total_height % shown);
+				x_vec[i] = 1;
+				y_vec[i] = 1 + used_height + gpu_height + (not Config::getB("cpu_bottom")) * Cpu::shown * Cpu::height;
+				used_height += height_vec[i];
+
+				const auto prefix = "comfy"s + static_cast<char>('0' + shown_panels[i]);
+				const auto title = uresize(Config::getS(prefix + "_title"), max(1, width - 6));
+				box[i] = createBox(x_vec[i], y_vec[i], width, height_vec[i], Theme::c("net_box"), true, title);
+			}
+		}
+
 		//* Calculate and draw mem box outlines
 		if (Mem::shown) {
 			using namespace Mem;
@@ -2435,22 +2558,22 @@ namespace Draw {
 			auto mem_graphs = Config::getB("mem_graphs");
 
 			width = round((double)Term::width * (Proc::shown ? width_p : 100) / 100);
-		#ifdef GPU_SUPPORT
-			height = floor(static_cast<double>(Term::height) * (100 - Net::height_p * Net::shown*4 / ((Gpu::shown != 0 and Cpu::shown) + 4)) / 100) - Cpu::height - Gpu::total_height;
-		#else
-			height = floor(static_cast<double>(Term::height) * (100 - Cpu::height_p * Cpu::shown - Net::height_p * Net::shown) / 100);
-		#endif
+	#ifdef GPU_SUPPORT
+			height = floor(static_cast<double>(Term::height) * (100 - Net::height_p * Net::shown*4 / ((Gpu::shown != 0 and Cpu::shown) + 4)) / 100) - Cpu::height - Gpu::total_height - Comfy::total_height;
+	#else
+			height = floor(static_cast<double>(Term::height) * (100 - Cpu::height_p * Cpu::shown - Net::height_p * Net::shown) / 100) - Comfy::total_height;
+	#endif
 			x = (proc_left and Proc::shown) ? Term::width - width + 1: 1;
 			if (mem_below_net and Net::shown)
-		#ifdef GPU_SUPPORT
+	#ifdef GPU_SUPPORT
 				y = Term::height - height + 1 - (cpu_bottom ? Cpu::height : 0);
 			else
-				y = (cpu_bottom ? 1 : Cpu::height + 1) + Gpu::total_height;
-		#else
+				y = (cpu_bottom ? 1 : Cpu::height + 1) + Gpu::total_height + Comfy::total_height;
+	#else
 				y = Term::height - height + 1 - (cpu_bottom ? Cpu::height : 0);
 			else
-				y = cpu_bottom ? 1 : Cpu::height + 1;
-		#endif
+				y = (cpu_bottom ? 1 : Cpu::height + 1) + Comfy::total_height;
+	#endif
 
 			if (show_disks) {
 				mem_width = ceil((double)(width - 3) / 2);
@@ -2499,18 +2622,18 @@ namespace Draw {
 		if (Net::shown) {
 			using namespace Net;
 			width = round((double)Term::width * (Proc::shown ? width_p : 100) / 100);
-		#ifdef GPU_SUPPORT
-			height = Term::height - Cpu::height - Gpu::total_height - Mem::height;
-		#else
-			height = Term::height - Cpu::height - Mem::height;
-		#endif
+	#ifdef GPU_SUPPORT
+			height = Term::height - Cpu::height - Gpu::total_height - Comfy::total_height - Mem::height;
+	#else
+			height = Term::height - Cpu::height - Comfy::total_height - Mem::height;
+	#endif
 			x = (proc_left and Proc::shown) ? Term::width - width + 1 : 1;
 			if (mem_below_net and Mem::shown)
-			#ifdef GPU_SUPPORT
-				y = (cpu_bottom ? 1 : Cpu::height + 1) + Gpu::total_height;
-			#else
-				y = cpu_bottom ? 1 : Cpu::height + 1;
-			#endif
+	#ifdef GPU_SUPPORT
+				y = (cpu_bottom ? 1 : Cpu::height + 1) + Gpu::total_height + Comfy::total_height;
+	#else
+				y = (cpu_bottom ? 1 : Cpu::height + 1) + Comfy::total_height;
+	#endif
 			else
 				y = Term::height - height + 1 - (cpu_bottom ? Cpu::height : 0);
 
@@ -2533,17 +2656,17 @@ namespace Draw {
 		if (Proc::shown) {
 			using namespace Proc;
 			width = Term::width - (Mem::shown ? Mem::width : (Net::shown ? Net::width : 0));
-		#ifdef GPU_SUPPORT
-			height = Term::height - Cpu::height - Gpu::total_height;
-		#else
-			height = Term::height - Cpu::height;
-		#endif
+	#ifdef GPU_SUPPORT
+			height = Term::height - Cpu::height - Gpu::total_height - Comfy::total_height;
+	#else
+			height = Term::height - Cpu::height - Comfy::total_height;
+	#endif
 			x = proc_left ? 1 : Term::width - width + 1;
-		#ifdef GPU_SUPPORT
-			y = ((cpu_bottom and Cpu::shown) ? 1 : Cpu::height + 1) + Gpu::total_height;
-		#else
-			y = (cpu_bottom and Cpu::shown) ? 1 : Cpu::height + 1;
-		#endif
+	#ifdef GPU_SUPPORT
+			y = ((cpu_bottom and Cpu::shown) ? 1 : Cpu::height + 1) + Gpu::total_height + Comfy::total_height;
+	#else
+			y = ((cpu_bottom and Cpu::shown) ? 1 : Cpu::height + 1) + Comfy::total_height;
+	#endif
 			select_max = height - 3;
 			box = createBox(x, y, width, height, Theme::c("proc_box"), true, "proc", "", 4);
 		}

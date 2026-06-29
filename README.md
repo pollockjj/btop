@@ -1377,8 +1377,29 @@ graph_symbol_net = "default"
 # Graph symbol to use for graphs in cpu box, "default", "braille", "block" or "tty".
 graph_symbol_proc = "default"
 
-#* Manually set which boxes to show. Available values are "cpu mem net proc" and "gpu0" through "gpu5", separate values with whitespace.
+#* Manually set which boxes to show. Available values are "cpu mem net proc comfy0 comfy1" and "gpu0" through "gpu5", separate values with whitespace.
 shown_boxes = "cpu mem net proc"
+
+#* Path to the log file tailed by the comfy0 box. Empty string disables file reads.
+comfy0_log_path = ""
+
+#* Path to the log file tailed by the comfy1 box. Empty string disables file reads.
+comfy1_log_path = ""
+
+#* Title shown for the comfy0 log tail box.
+comfy0_title = "cuda0 ComfyUI"
+
+#* Title shown for the comfy1 log tail box.
+comfy1_title = "cuda1 ComfyUI"
+
+#* View filter for comfy0 log tail. Available values are "clean" "raw" "triage" "markers" "errors".
+comfy0_view = "clean"
+
+#* View filter for comfy1 log tail. Available values are "clean" "raw" "triage" "markers" "errors".
+comfy1_view = "clean"
+
+#* Requested height for each comfy log tail box. Values are clamped to preserve shown box minimum sizes.
+comfy_tail_height = 10
 
 #* Update time in milliseconds, recommended 2000 ms or above for better sample times for graphs.
 update_ms = 2000

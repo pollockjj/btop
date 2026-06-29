@@ -121,6 +121,9 @@ namespace Term {
         bool mem = boxes.find("mem") != string::npos;
         bool net = boxes.find("net") != string::npos;
         bool proc = boxes.find("proc") != string::npos;
+		int comfy = 0;
+		for (char i = '0'; i <= '1'; i++)
+			comfy += (boxes.contains("comfy"s + i) ? 1 : 0);
 	#ifdef GPU_SUPPORT
 		int gpu = 0;
         if (Gpu::count > 0)
@@ -135,8 +138,10 @@ namespace Term {
 	#ifdef GPU_SUPPORT
 		if (gpu != 0 and width < Gpu::min_width) width = Gpu::min_width;
 	#endif
+		if (comfy != 0 and width < Comfy::min_width) width = Comfy::min_width;
 
 		int height = (cpu ? Cpu::min_height : 0);
+		height += comfy * Comfy::min_height;
 		if (proc) height += Proc::min_height;
 		else height += (mem ? Mem::min_height : 0) + (net ? Net::min_height : 0);
 	#ifdef GPU_SUPPORT

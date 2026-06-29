@@ -50,7 +50,7 @@ using namespace Tools;
 const vector<string> Config::valid_graph_symbols = { "braille", "block", "tty" };
 const vector<string> Config::valid_graph_symbols_def = { "default", "braille", "block", "tty" };
 const vector<string> Config::valid_boxes = {
-	"cpu", "mem", "net", "proc"
+	"cpu", "mem", "net", "proc", "comfy0", "comfy1"
 #ifdef GPU_SUPPORT
 	,"gpu0", "gpu1", "gpu2", "gpu3", "gpu4", "gpu5"
 #endif
@@ -118,7 +118,15 @@ namespace Config {
 
 		{"graph_symbol_proc", 	"# Graph symbol to use for graphs in cpu box, \"default\", \"braille\", \"block\" or \"tty\"."},
 
-		{"shown_boxes", 		"#* Manually set which boxes to show. Available values are \"cpu mem net proc\" and \"gpu0\" through \"gpu5\", separate values with whitespace."},
+		{"shown_boxes", 		"#* Manually set which boxes to show. Available values are \"cpu mem net proc comfy0 comfy1\" and \"gpu0\" through \"gpu5\", separate values with whitespace."},
+
+		{"comfy0_log_path",		"#* Path to the log file tailed by the comfy0 box. Empty string disables file reads."},
+		{"comfy1_log_path",		"#* Path to the log file tailed by the comfy1 box. Empty string disables file reads."},
+		{"comfy0_title",		"#* Title shown for the comfy0 log tail box."},
+		{"comfy1_title",		"#* Title shown for the comfy1 log tail box."},
+		{"comfy0_view",			"#* View filter for comfy0 log tail. Available values are \"clean\" \"raw\" \"triage\" \"markers\" \"errors\"."},
+		{"comfy1_view",			"#* View filter for comfy1 log tail. Available values are \"clean\" \"raw\" \"triage\" \"markers\" \"errors\"."},
+		{"comfy_tail_height",	"#* Requested height for each comfy log tail box. Values are clamped to preserve shown box minimum sizes."},
 
 		{"update_ms", 			"#* Update time in milliseconds, recommended 2000 ms or above for better sample times for graphs."},
 
@@ -281,6 +289,12 @@ namespace Config {
 		{"graph_symbol_mem", "default"},
 		{"graph_symbol_net", "default"},
 		{"graph_symbol_proc", "default"},
+		{"comfy0_log_path", ""},
+		{"comfy1_log_path", ""},
+		{"comfy0_title", "cuda0 ComfyUI"},
+		{"comfy1_title", "cuda1 ComfyUI"},
+		{"comfy0_view", "clean"},
+		{"comfy1_view", "clean"},
 		{"proc_sorting", "cpu lazy"},
 		{"cpu_graph_upper", "Auto"},
 		{"cpu_graph_lower", "Auto"},
@@ -395,6 +409,7 @@ namespace Config {
 		{"proc_selected", 0},
 		{"proc_last_selected", 0},
 		{"proc_followed", 0},
+		{"comfy_tail_height", 10},
 	};
 	std::unordered_map<std::string_view, int> intsTmp;
 
@@ -482,7 +497,7 @@ namespace Config {
 				return false;
 			}
 			for (int y = 0; const auto& box : ssplit(preset, ',')) {
-				if (++y > 4) {
+				if (++y > 6) {
 					validError = "Too many boxes entered for preset!";
 					return false;
 				}
@@ -491,7 +506,7 @@ namespace Config {
 					validError = "Malformatted preset in config value presets!";
 					return false;
 				}
-				if (not is_in(vals.at(0), "cpu", "mem", "net", "proc", "gpu0", "gpu1", "gpu2", "gpu3", "gpu4", "gpu5")) {
+				if (not is_in(vals.at(0), "cpu", "mem", "net", "proc", "comfy0", "comfy1", "gpu0", "gpu1", "gpu2", "gpu3", "gpu4", "gpu5")) {
 					validError = "Invalid box name in config value presets!";
 					return false;
 				}
@@ -537,7 +552,7 @@ namespace Config {
 			}
 			if (vals.at(0).starts_with("gpu")) {
 				set("graph_symbol_gpu", vals.at(2));
-			} else {
+			} else if (not vals.at(0).starts_with("comfy")) {
 				set(strings.find("graph_symbol_" + vals.at(0))->first, vals.at(2));
 			}
 		}
@@ -580,6 +595,9 @@ namespace Config {
 		else if (name == "update_ms" and i_value > ONE_DAY_MILLIS)
 			validError = fmt::format("Config value update_ms set too high (>{}).", ONE_DAY_MILLIS);
 
+		else if (name == "comfy_tail_height" and (i_value < 6 or i_value > 40))
+			validError = "Config value comfy_tail_height must be between 6 and 40.";
+
 		else if (name == "proc_tree_auto_collapse" and i_value < 0)
 			validError = "Config value proc_tree_auto_collapse must be >= 0.";
 
@@ -617,6 +635,9 @@ namespace Config {
 			else
 				return true;
 		}
+
+		else if ((name == "comfy0_view" or name == "comfy1_view") and not ComfyTail::valid_view(value))
+			validError = "Invalid comfy log view: " + value;
 
 	#ifdef GPU_SUPPORT
 		else if (name == "show_gpu_info" and not v_contains(show_gpu_values, value))
@@ -727,7 +748,7 @@ namespace Config {
 			if (not v_contains(valid_boxes, box)) return false;
 		#ifdef GPU_SUPPORT
 			if (box.starts_with("gpu")) {
-				int gpu_num = stoi(box.substr(3)) + 1;
+				int gpu_num = std::stoi(box.substr(3)) + 1;
 				if (gpu_num > Gpu::count) return false;
 			}
 		#endif

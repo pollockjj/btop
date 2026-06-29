@@ -18,6 +18,7 @@ tab-size = 4
 
 #include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -1076,29 +1077,42 @@ namespace Cpu {
         return value;
     }
 
-    static constexpr auto detect_active_cpus() {
+    static auto detect_active_cpus() -> std::vector<std::int32_t> {
         auto stream = std::ifstream { "/sys/fs/cgroup/cpuset.cpus.effective" };
         auto buf = std::string { std::istreambuf_iterator<char> { stream }, {} };
+		std::vector<std::int32_t> cpus;
 
         if (buf.empty()) {
-            return std::views::iota(0, Shared::coreCount) | std::ranges::to<std::vector<std::int32_t>>();
+            cpus.reserve(Shared::coreCount);
+			for (auto cpu : std::views::iota(0, Shared::coreCount))
+				cpus.push_back(cpu);
+			return cpus;
         }
 
-        return buf | std::views::split(',') | std::views::transform([](auto&& range) -> auto {
-                   auto view = std::string_view { range };
-                   auto dash = view.find('-');
+		for (size_t pos = 0; pos < buf.size();) {
+			const auto end_pos = buf.find(',', pos);
+			auto view = std::string_view { buf }.substr(pos, end_pos == std::string::npos ? std::string_view::npos : end_pos - pos);
+			while (not view.empty() and std::isspace(static_cast<unsigned char>(view.back())))
+				view.remove_suffix(1);
+			while (not view.empty() and std::isspace(static_cast<unsigned char>(view.front())))
+				view.remove_prefix(1);
+			if (not view.empty()) {
+				const auto dash = view.find('-');
+				if (dash == std::string_view::npos) {
+					cpus.push_back(to_int(view));
+				}
+				else {
+					const auto start = to_int(view.substr(0, dash));
+					const auto end = to_int(view.substr(dash + 1));
+					for (auto cpu : std::views::iota(start, end + 1))
+						cpus.push_back(cpu);
+				}
+			}
+			if (end_pos == std::string::npos) break;
+			pos = end_pos + 1;
+		}
 
-                   if (dash == std::string_view::npos) {
-                       // Single CPU, return iota of single element
-                       auto value = to_int(view);
-                       return std::views::iota(value, value + 1);
-                   }
-
-                   auto start = to_int(view.substr(0, dash));
-                   auto end = to_int(view.substr(dash + 1));
-                   return std::views::iota(start, end + 1);
-               }) |
-               std::views::join | std::ranges::to<std::vector<std::int32_t>>();
+		return cpus;
     }
 
 	auto collect(bool no_update) -> cpu_info& {

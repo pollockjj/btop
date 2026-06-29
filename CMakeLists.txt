@@ -54,6 +54,7 @@ add_library(libbtop OBJECT
   src/btop_log.cpp
   src/btop_menu.cpp
   src/btop_shared.cpp
+  src/btop_tail.cpp
   src/btop_theme.cpp
   src/btop_tools.cpp
 )
@@ -121,10 +122,6 @@ endif()
 check_cxx_symbol_exists("__cpp_lib_ranges" "version" HAS_CXX_RANGES)
 if(NOT HAS_CXX_RANGES)
   message(FATAL_ERROR "The compiler doesn't support std::ranges")
-endif()
-check_cxx_symbol_exists("__cpp_lib_ranges_to_container" "version" HAS_CXX_RANGES_TO_CONTAINER)
-if(NOT HAS_CXX_RANGES_TO_CONTAINER)
-  message(FATAL_ERROR "The compiler doesn't support std::ranges::to")
 endif()
 check_cxx_symbol_exists("__cpp_lib_string_contains" "version" HAS_CXX_STRING_CONTAINS)
 if(NOT HAS_CXX_STRING_CONTAINS)

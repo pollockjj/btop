@@ -42,6 +42,8 @@ tab-size = 4
 # include <kvm.h>
 #endif
 
+#include "btop_tail.hpp"
+
 using std::array;
 using std::atomic;
 using std::deque;
@@ -204,6 +206,18 @@ namespace Gpu {
 }
 
 #endif // GPU_SUPPORT
+
+namespace Comfy {
+	extern vector<string> box;
+	extern int width, total_height, min_width, min_height;
+	extern vector<int> x_vec, y_vec, height_vec;
+	extern vector<bool> redraw;
+	extern int shown;
+	extern vector<int> shown_panels;
+
+	auto collect(unsigned long panel, bool no_update = false) -> const ComfyTail::Snapshot&;
+	string draw(const ComfyTail::Snapshot& snapshot, unsigned long index, bool force_redraw = false, bool data_same = false);
+}
 
 namespace Cpu {
 	extern string box;
