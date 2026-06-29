@@ -216,6 +216,8 @@ namespace Comfy {
 	extern vector<int> shown_panels;
 
 	auto collect(unsigned long panel, bool no_update = false) -> const ComfyTail::Snapshot&;
+	bool scroll(unsigned long index, int delta);
+	unsigned long panel_at(int col, int line);
 	string draw(const ComfyTail::Snapshot& snapshot, unsigned long index, bool force_redraw = false, bool data_same = false);
 }
 

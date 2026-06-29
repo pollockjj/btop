@@ -54,6 +54,8 @@ namespace ComfyTail {
 	struct Snapshot {
 		vector<Line> lines;
 		string status;
+		size_t max_scroll = 0;
+		size_t scroll_offset = 0;
 	};
 
 	[[nodiscard]] bool valid_view(std::string_view value);
@@ -64,7 +66,7 @@ namespace ComfyTail {
 
 	class TailReader {
 	public:
-		[[nodiscard]] Snapshot read(const std::filesystem::path& path, View view, size_t max_lines);
+		[[nodiscard]] Snapshot read(const std::filesystem::path& path, View view, size_t max_lines, size_t scroll_offset = 0);
 		void reset();
 
 	private:
@@ -77,6 +79,6 @@ namespace ComfyTail {
 
 		void ingest(std::string_view chunk);
 		void append_line(string raw_line);
-		[[nodiscard]] Snapshot snapshot(View view, size_t max_lines, string status = "") const;
+		[[nodiscard]] Snapshot snapshot(View view, size_t max_lines, string status = "", size_t scroll_offset = 0) const;
 	};
 }

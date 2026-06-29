@@ -276,7 +276,7 @@ namespace ComfyTail {
 		history.clear();
 	}
 
-	Snapshot TailReader::read(const std::filesystem::path& new_path, View view, size_t max_lines) {
+	Snapshot TailReader::read(const std::filesystem::path& new_path, View view, size_t max_lines, size_t scroll_offset) {
 		if (new_path.empty()) {
 			reset();
 			return snapshot(view, max_lines, "log path not configured");
@@ -335,7 +335,7 @@ namespace ComfyTail {
 			ingest(chunk);
 		}
 
-		return snapshot(view, max_lines, history.empty() ? "waiting for log lines" : "");
+		return snapshot(view, max_lines, history.empty() ? "waiting for log lines" : "", scroll_offset);
 	}
 
 	void TailReader::ingest(std::string_view chunk) {
@@ -376,16 +376,26 @@ namespace ComfyTail {
 			history.pop_front();
 	}
 
-	Snapshot TailReader::snapshot(View view, size_t max_lines, string status) const {
+	Snapshot TailReader::snapshot(View view, size_t max_lines, string status, size_t scroll_offset) const {
 		Snapshot result;
 		result.status = std::move(status);
 		if (max_lines == 0) return result;
 
-		for (auto it = history.rbegin(); it != history.rend() and result.lines.size() < max_lines; ++it) {
-			if (visible_in_view(it->severity, view))
-				result.lines.push_back(*it);
+		vector<Line> visible;
+		visible.reserve(history.size());
+		for (const auto& line : history) {
+			if (visible_in_view(line.severity, view))
+				visible.push_back(line);
 		}
-		std::ranges::reverse(result.lines);
+
+		result.max_scroll = visible.size() > max_lines ? visible.size() - max_lines : 0;
+		result.scroll_offset = std::min(scroll_offset, result.max_scroll);
+		const size_t start = visible.size() > max_lines ? visible.size() - max_lines - result.scroll_offset : 0;
+		const size_t stop = std::min(visible.size(), start + max_lines);
+
+		for (size_t i = start; i < stop; ++i) {
+			result.lines.push_back(visible.at(i));
+		}
 		return result;
 	}
 }
@@ -394,10 +404,40 @@ namespace Comfy {
 	namespace {
 		std::array<ComfyTail::TailReader, 2> readers;
 		std::array<ComfyTail::Snapshot, 2> snapshots;
+		std::array<size_t, 2> scroll_offsets = {};
 
 		[[nodiscard]] string config_prefix(unsigned long panel) {
 			return "comfy"s + static_cast<char>('0' + panel);
 		}
+	}
+
+	bool scroll(unsigned long index, int delta) {
+		if (index >= scroll_offsets.size() or index >= snapshots.size()) return false;
+		const size_t current = scroll_offsets.at(index);
+		const size_t max_scroll = snapshots.at(index).max_scroll;
+		size_t next = current;
+		if (delta > 0) {
+			next = std::min(max_scroll, current + static_cast<size_t>(delta));
+		}
+		else if (delta < 0) {
+			const auto amount = static_cast<size_t>(-delta);
+			next = amount >= current ? 0 : current - amount;
+		}
+		if (next == current) return false;
+		scroll_offsets.at(index) = next;
+		if (index < redraw.size()) redraw.at(index) = true;
+		return true;
+	}
+
+	unsigned long panel_at(int col, int line) {
+		for (unsigned long i = 0; i < static_cast<unsigned long>(shown); ++i) {
+			if (i >= x_vec.size() or i >= y_vec.size() or i >= height_vec.size()) continue;
+			if (col >= x_vec.at(i) and col < x_vec.at(i) + width
+				and line >= y_vec.at(i) and line < y_vec.at(i) + height_vec.at(i)) {
+				return i;
+			}
+		}
+		return static_cast<unsigned long>(shown);
 	}
 
 	auto collect(unsigned long index, bool no_update) -> const ComfyTail::Snapshot& {
@@ -409,7 +449,8 @@ namespace Comfy {
 		const auto prefix = config_prefix(panel);
 		const auto view = ComfyTail::parse_view(Config::getS(prefix + "_view"));
 		const auto max_lines = index < height_vec.size() ? static_cast<size_t>(std::max(1, height_vec.at(index) - 2)) : 8;
-		snapshots.at(index) = readers.at(panel).read(Config::getS(prefix + "_log_path"), view, max_lines);
+		snapshots.at(index) = readers.at(panel).read(Config::getS(prefix + "_log_path"), view, max_lines, scroll_offsets.at(index));
+		scroll_offsets.at(index) = snapshots.at(index).scroll_offset;
 		return snapshots.at(index);
 	}
 }

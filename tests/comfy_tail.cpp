@@ -94,6 +94,25 @@ TEST(comfy_tail, reader_resets_on_missing_path_and_truncation) {
 	EXPECT_EQ(unconfigured.status, "log path not configured");
 }
 
+TEST(comfy_tail, reader_scroll_offset_moves_window_above_tail) {
+	const auto path = workspace() / "scroll.log";
+	write_file(path, "one\ntwo\nthree\nfour\nfive\n");
+
+	ComfyTail::TailReader reader;
+	auto bottom = reader.read(path, ComfyTail::View::Raw, 3);
+	EXPECT_EQ(texts(bottom), (std::vector<std::string>{"three", "four", "five"}));
+	EXPECT_EQ(bottom.max_scroll, 2);
+	EXPECT_EQ(bottom.scroll_offset, 0);
+
+	auto older = reader.read(path, ComfyTail::View::Raw, 3, 2);
+	EXPECT_EQ(texts(older), (std::vector<std::string>{"one", "two", "three"}));
+	EXPECT_EQ(older.scroll_offset, 2);
+
+	auto clamped = reader.read(path, ComfyTail::View::Raw, 3, 99);
+	EXPECT_EQ(texts(clamped), (std::vector<std::string>{"one", "two", "three"}));
+	EXPECT_EQ(clamped.scroll_offset, 2);
+}
+
 TEST(comfy_tail_config, boxes_views_height_and_presets_validate) {
 	Term::width = 200;
 	Term::height = 80;

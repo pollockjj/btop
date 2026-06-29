@@ -538,6 +538,18 @@ namespace Input {
 				}
 			}
 
+			//? Mouse-wheel scrollback for comfy log tail boxes
+			if (Comfy::shown != 0 and key.starts_with("mouse_scroll_")) {
+				const auto& [col, line] = mouse_pos;
+				const auto panel = Comfy::panel_at(col, line);
+				if (panel < static_cast<unsigned long>(Comfy::shown)) {
+					const int delta = key == "mouse_scroll_up" ? 3 : -3;
+					if (Comfy::scroll(panel, delta))
+						Runner::run("comfy", false, true);
+					return;
+				}
+			}
+
 			//? Input actions for cpu box
 			if (Cpu::shown) {
 				bool keep_going = false;
