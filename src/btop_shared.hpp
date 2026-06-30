@@ -210,7 +210,7 @@ namespace Gpu {
 namespace Comfy {
 	extern vector<string> box;
 	extern int width, total_height, min_width, min_height;
-	extern vector<int> x_vec, y_vec, height_vec;
+	extern vector<int> x_vec, y_vec, width_vec, height_vec;
 	extern vector<bool> redraw;
 	extern int shown;
 	extern vector<int> shown_panels;

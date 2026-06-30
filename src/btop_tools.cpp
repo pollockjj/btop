@@ -138,10 +138,10 @@ namespace Term {
 	#ifdef GPU_SUPPORT
 		if (gpu != 0 and width < Gpu::min_width) width = Gpu::min_width;
 	#endif
-		if (comfy != 0 and width < Comfy::min_width) width = Comfy::min_width;
+		if (comfy != 0 and width < Comfy::min_width * comfy) width = Comfy::min_width * comfy;
 
 		int height = (cpu ? Cpu::min_height : 0);
-		height += comfy * Comfy::min_height;
+		height += (comfy != 0 ? Comfy::min_height : 0);
 		if (proc) height += Proc::min_height;
 		else height += (mem ? Mem::min_height : 0) + (net ? Net::min_height : 0);
 	#ifdef GPU_SUPPORT

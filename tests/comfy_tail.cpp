@@ -73,6 +73,46 @@ TEST(comfy_tail, reader_tails_appends_and_filters_views) {
 	EXPECT_EQ(texts(completed).back(), "partial done");
 }
 
+TEST(comfy_tail, reader_exposes_carriage_return_progress_as_live_line) {
+	const auto path = workspace() / "progress.log";
+	write_file(path, "Generating tokens:   1%|          | 10/100 [00:01<00:09, 10.0it/s]\r");
+
+	ComfyTail::TailReader reader;
+	auto first = reader.read(path, ComfyTail::View::Clean, 3);
+	ASSERT_EQ(first.lines.size(), 1);
+	EXPECT_TRUE(first.lines[0].live);
+	ASSERT_TRUE(first.lines[0].progress.valid);
+	EXPECT_EQ(first.lines[0].progress.label, "Generating tokens");
+	EXPECT_EQ(first.lines[0].progress.percent, 1);
+	EXPECT_EQ(first.lines[0].progress.current, 10);
+	EXPECT_EQ(first.lines[0].progress.total, 100);
+	EXPECT_EQ(first.lines[0].progress.elapsed, "00:01");
+	EXPECT_EQ(first.lines[0].progress.eta, "00:09");
+	EXPECT_EQ(first.lines[0].progress.rate, "10.0it/s");
+
+	write_file(path, "Generating tokens:  25%|##        | 25/100 [00:02<00:06, 12.5it/s]\r", std::ios::app);
+	auto updated = reader.read(path, ComfyTail::View::Clean, 3);
+	ASSERT_EQ(updated.lines.size(), 1);
+	EXPECT_TRUE(updated.lines[0].live);
+	ASSERT_TRUE(updated.lines[0].progress.valid);
+	EXPECT_EQ(updated.lines[0].progress.percent, 25);
+	EXPECT_EQ(updated.lines[0].progress.current, 25);
+	EXPECT_EQ(updated.lines[0].progress.rate, "12.5it/s");
+
+	auto raw = reader.read(path, ComfyTail::View::Raw, 3);
+	ASSERT_EQ(raw.lines.size(), 1);
+	EXPECT_TRUE(raw.lines[0].live);
+	EXPECT_FALSE(raw.lines[0].progress.valid);
+	EXPECT_EQ(raw.lines[0].text, "Generating tokens:  25%|##        | 25/100 [00:02<00:06, 12.5it/s]");
+
+	write_file(path, "\n", std::ios::app);
+	auto completed = reader.read(path, ComfyTail::View::Clean, 3);
+	ASSERT_EQ(completed.lines.size(), 1);
+	EXPECT_FALSE(completed.lines[0].live);
+	ASSERT_TRUE(completed.lines[0].progress.valid);
+	EXPECT_EQ(completed.lines[0].progress.current, 25);
+}
+
 TEST(comfy_tail, reader_resets_on_missing_path_and_truncation) {
 	const auto path = workspace() / "rotate.log";
 	ComfyTail::TailReader reader;

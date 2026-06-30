@@ -1222,7 +1222,7 @@ namespace Gpu {
 namespace Comfy {
 	int width = 45, total_height = 0;
 	int min_width = 36, min_height = 6;
-	vector<int> x_vec = {}, y_vec = {}, height_vec = {};
+	vector<int> x_vec = {}, y_vec = {}, width_vec = {}, height_vec = {};
 	vector<bool> redraw = {};
 	int shown = 0;
 	vector<int> shown_panels = {};
@@ -1244,6 +1244,26 @@ namespace Comfy {
 			}
 			return Theme::c("main_fg");
 		}
+
+		[[nodiscard]] string render_progress(const ComfyTail::Progress& progress, int width) {
+			if (width < 1) return "";
+			const auto label = progress.label.empty() ? "progress"s : progress.label;
+			string info = fmt::format("{}% {}/{}", progress.percent, progress.current, progress.total);
+			if (not progress.rate.empty())
+				info += " " + progress.rate;
+			if (not progress.eta.empty())
+				info += " eta " + progress.eta;
+
+			const int label_width = static_cast<int>(ulen(label, true));
+			const int info_width = static_cast<int>(ulen(info, true));
+			const int bar_width = width - label_width - info_width - 4;
+			if (bar_width < 6)
+				return ljust(label + " " + info, width, true, true);
+
+			const int filled = clamp(static_cast<int>(round(static_cast<double>(bar_width) * progress.percent / 100.0)), 0, bar_width);
+			const string bar = "[" + string(static_cast<size_t>(filled), '#') + string(static_cast<size_t>(bar_width - filled), '.') + "]";
+			return ljust(label + " " + bar + " " + info, width, true, true);
+		}
 	}
 
 	string draw(const ComfyTail::Snapshot& snapshot, unsigned long index, bool force_redraw, bool data_same) {
@@ -1253,12 +1273,13 @@ namespace Comfy {
 
 		auto& x = x_vec[index];
 		auto& y = y_vec[index];
+		auto& panel_width = width_vec[index];
 		auto& height = height_vec[index];
-		const int inner_width = max(1, width - 2);
+		const int inner_width = max(1, panel_width - 2);
 		const int inner_height = max(1, height - 2);
 
 		string out;
-		out.reserve(width * height);
+		out.reserve(panel_width * height);
 		if (redraw[index]) out += box[index];
 
 		for (int row = 0; row < inner_height; row++) {
@@ -1271,8 +1292,9 @@ namespace Comfy {
 				}
 			}
 			else if (row < static_cast<int>(snapshot.lines.size())) {
-				text = snapshot.lines[row].text;
-				color = color_for(snapshot.lines[row].severity);
+				const auto& line = snapshot.lines[row];
+				text = line.progress.valid ? render_progress(line.progress, inner_width) : line.text;
+				color = line.progress.valid ? Theme::c("proc_misc") : color_for(line.severity);
 			}
 			out += Mv::to(y + row + 1, x + 1) + color + ljust(text, inner_width, true, false) + Fx::ub;
 		}
@@ -2345,6 +2367,7 @@ namespace Draw {
 		Comfy::shown_panels.clear();
 		Comfy::x_vec.clear();
 		Comfy::y_vec.clear();
+		Comfy::width_vec.clear();
 		Comfy::height_vec.clear();
 		Comfy::redraw.clear();
 
@@ -2381,7 +2404,7 @@ namespace Draw {
 		}
 		Comfy::shown = Comfy::shown_panels.size();
 		const int comfy_requested_height = clamp(Config::getI("comfy_tail_height"), Comfy::min_height, 40);
-		Comfy::total_height = Comfy::shown * comfy_requested_height;
+		Comfy::total_height = Comfy::shown != 0 ? comfy_requested_height : 0;
 		Mem::shown = boxes.contains("mem");
 		Net::shown = boxes.contains("net");
 		Proc::shown = boxes.contains("proc");
@@ -2518,7 +2541,7 @@ namespace Draw {
 		//* Calculate and draw comfy log tail box outlines
 		if (Comfy::shown != 0) {
 			using namespace Comfy;
-			x_vec.resize(shown); y_vec.resize(shown);
+			x_vec.resize(shown); y_vec.resize(shown); width_vec.resize(shown);
 			height_vec.resize(shown);
 			box.resize(shown);
 			redraw.resize(shown);
@@ -2530,23 +2553,27 @@ namespace Draw {
 			const bool has_lower = Mem::shown or Net::shown or Proc::shown;
 			const bool has_upper = Cpu::shown or gpu_height > 0;
 			const int lower_min = Proc::shown ? Proc::min_height : (Mem::shown ? Mem::min_height : 0) + (Net::shown ? Net::min_height : 0);
-			const int available = max(shown * min_height, Term::height - Cpu::height - gpu_height - (has_lower ? lower_min : 0));
-			int desired_total = shown * comfy_requested_height;
+			const int available = max(min_height, Term::height - Cpu::height - gpu_height - (has_lower ? lower_min : 0));
+			int desired_total = comfy_requested_height;
 			if (not has_upper and not has_lower) desired_total = Term::height;
-			total_height = clamp(desired_total, shown * min_height, available);
+			total_height = clamp(desired_total, min_height, available);
 
-			int used_height = 0;
 			width = Term::width;
+			int next_x = 1;
+			int remaining_width = Term::width;
 			for (auto i = 0; i < shown; i++) {
 				redraw[i] = true;
-				height_vec[i] = total_height / shown + (i < total_height % shown);
-				x_vec[i] = 1;
-				y_vec[i] = 1 + used_height + gpu_height + (not Config::getB("cpu_bottom")) * Cpu::shown * Cpu::height;
-				used_height += height_vec[i];
+				const int remaining_panels = shown - i;
+				width_vec[i] = remaining_width / remaining_panels;
+				height_vec[i] = total_height;
+				x_vec[i] = next_x;
+				y_vec[i] = 1 + gpu_height + (not Config::getB("cpu_bottom")) * Cpu::shown * Cpu::height;
+				next_x += width_vec[i];
+				remaining_width -= width_vec[i];
 
 				const auto prefix = "comfy"s + static_cast<char>('0' + shown_panels[i]);
-				const auto title = uresize(Config::getS(prefix + "_title"), max(1, width - 6));
-				box[i] = createBox(x_vec[i], y_vec[i], width, height_vec[i], Theme::c("net_box"), true, title);
+				const auto title = uresize(Config::getS(prefix + "_title"), max(1, width_vec[i] - 6));
+				box[i] = createBox(x_vec[i], y_vec[i], width_vec[i], height_vec[i], Theme::c("net_box"), true, title);
 			}
 		}
 

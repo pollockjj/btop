@@ -52,6 +52,39 @@ namespace {
 		return value;
 	}
 
+	[[nodiscard]] std::string_view trim_view(std::string_view value) {
+		value = ltrim_view(value);
+		while (not value.empty() and std::isspace(static_cast<unsigned char>(value.back())))
+			value.remove_suffix(1);
+		return value;
+	}
+
+	[[nodiscard]] string trim_copy(std::string_view value) {
+		return string{trim_view(value)};
+	}
+
+	[[nodiscard]] bool parse_u64(std::string_view value, size_t& pos, uint64_t& out) {
+		while (pos < value.size() and std::isspace(static_cast<unsigned char>(value[pos])))
+			pos++;
+		if (pos >= value.size() or not std::isdigit(static_cast<unsigned char>(value[pos])))
+			return false;
+
+		uint64_t parsed = 0;
+		while (pos < value.size() and std::isdigit(static_cast<unsigned char>(value[pos]))) {
+			parsed = parsed * 10 + static_cast<uint64_t>(value[pos] - '0');
+			pos++;
+		}
+		out = parsed;
+		return true;
+	}
+
+	[[nodiscard]] string strip_trailing_colon(std::string_view value) {
+		value = trim_view(value);
+		while (not value.empty() and (value.back() == ':' or std::isspace(static_cast<unsigned char>(value.back()))))
+			value.remove_suffix(1);
+		return trim_copy(value);
+	}
+
 	void pop_last_utf8_char(string& value) {
 		if (value.empty()) return;
 		value.pop_back();
@@ -267,11 +300,73 @@ namespace ComfyTail {
 		return severity != Severity::Noise;
 	}
 
+	Progress parse_progress_line(std::string_view clean) {
+		Progress progress;
+		const auto percent_marker = clean.find("%|");
+		if (percent_marker == std::string_view::npos)
+			return progress;
+
+		size_t percent_begin = percent_marker;
+		while (percent_begin > 0 and std::isdigit(static_cast<unsigned char>(clean[percent_begin - 1])))
+			percent_begin--;
+		if (percent_begin == percent_marker)
+			return progress;
+
+		uint64_t percent = 0;
+		size_t percent_pos = percent_begin;
+		if (not parse_u64(clean, percent_pos, percent) or percent_pos != percent_marker)
+			return progress;
+
+		const auto second_bar = clean.find('|', percent_marker + 2);
+		if (second_bar == std::string_view::npos)
+			return progress;
+
+		size_t value_pos = second_bar + 1;
+		uint64_t current = 0;
+		uint64_t total = 0;
+		if (not parse_u64(clean, value_pos, current))
+			return progress;
+		if (value_pos >= clean.size() or clean[value_pos] != '/')
+			return progress;
+		value_pos++;
+		if (not parse_u64(clean, value_pos, total) or total == 0)
+			return progress;
+
+		progress.valid = true;
+		progress.label = strip_trailing_colon(clean.substr(0, percent_begin));
+		progress.percent = static_cast<int>(std::clamp<uint64_t>(percent, 0, 100));
+		progress.current = current;
+		progress.total = total;
+
+		const auto bracket_begin = clean.find('[', value_pos);
+		const auto bracket_end = bracket_begin == std::string_view::npos ? std::string_view::npos : clean.find(']', bracket_begin + 1);
+		if (bracket_begin != std::string_view::npos and bracket_end != std::string_view::npos) {
+			auto inside = clean.substr(bracket_begin + 1, bracket_end - bracket_begin - 1);
+			const auto comma = inside.find(',');
+			auto timing = comma == std::string_view::npos ? inside : inside.substr(0, comma);
+			if (comma != std::string_view::npos)
+				progress.rate = trim_copy(inside.substr(comma + 1));
+
+			const auto eta_sep = timing.find('<');
+			if (eta_sep != std::string_view::npos) {
+				progress.elapsed = trim_copy(timing.substr(0, eta_sep));
+				progress.eta = trim_copy(timing.substr(eta_sep + 1));
+			}
+			else {
+				progress.elapsed = trim_copy(timing);
+			}
+		}
+
+		return progress;
+	}
+
 	void TailReader::reset() {
 		path.clear();
 		offset = 0;
 		initialized = false;
 		traceback_active = false;
+		live_active = false;
+		live_line.clear();
 		partial.clear();
 		history.clear();
 	}
@@ -293,6 +388,8 @@ namespace ComfyTail {
 			initialized = false;
 			offset = 0;
 			partial.clear();
+			live_active = false;
+			live_line.clear();
 			traceback_active = false;
 			return snapshot(view, max_lines, "waiting for "s + path.string());
 		}
@@ -301,6 +398,8 @@ namespace ComfyTail {
 			initialized = false;
 			offset = 0;
 			partial.clear();
+			live_active = false;
+			live_line.clear();
 			traceback_active = false;
 			history.clear();
 		}
@@ -310,6 +409,8 @@ namespace ComfyTail {
 			initialized = false;
 			offset = 0;
 			partial.clear();
+			live_active = false;
+			live_line.clear();
 			traceback_active = false;
 			return snapshot(view, max_lines, "waiting for "s + path.string());
 		}
@@ -341,11 +442,21 @@ namespace ComfyTail {
 	void TailReader::ingest(std::string_view chunk) {
 		for (char c : chunk) {
 			if (c == '\r') {
+				live_active = true;
+				if (not partial.empty())
+					live_line = partial;
 				partial.clear();
 				continue;
 			}
 			if (c == '\n') {
-				append_line(std::move(partial));
+				if (not partial.empty()) {
+					append_line(std::move(partial));
+				}
+				else if (live_active and not live_line.empty()) {
+					append_line(std::move(live_line));
+				}
+				live_active = false;
+				live_line.clear();
 				partial.clear();
 				continue;
 			}
@@ -371,9 +482,20 @@ namespace ComfyTail {
 			severity = Severity::Fatal;
 		}
 
-		history.push_back({std::move(clean), severity});
+		auto progress = parse_progress_line(clean);
+		history.push_back({std::move(clean), severity, false, std::move(progress)});
 		while (history.size() > max_history_lines)
 			history.pop_front();
+	}
+
+	bool TailReader::has_live_line() const {
+		return live_active and (not partial.empty() or not live_line.empty());
+	}
+
+	Line TailReader::build_live_line() const {
+		const auto raw = not partial.empty() ? partial : live_line;
+		auto clean = scrub_line(raw);
+		return {clean, classify_line(clean), true, parse_progress_line(clean)};
 	}
 
 	Snapshot TailReader::snapshot(View view, size_t max_lines, string status, size_t scroll_offset) const {
@@ -382,10 +504,21 @@ namespace ComfyTail {
 		if (max_lines == 0) return result;
 
 		vector<Line> visible;
-		visible.reserve(history.size());
+		visible.reserve(history.size() + (has_live_line() ? 1 : 0));
 		for (const auto& line : history) {
+			if (visible_in_view(line.severity, view)) {
+				auto out_line = line;
+				if (view == View::Raw)
+					out_line.progress = {};
+				visible.push_back(std::move(out_line));
+			}
+		}
+		if (has_live_line()) {
+			auto line = build_live_line();
+			if (view == View::Raw)
+				line.progress = {};
 			if (visible_in_view(line.severity, view))
-				visible.push_back(line);
+				visible.push_back(std::move(line));
 		}
 
 		result.max_scroll = visible.size() > max_lines ? visible.size() - max_lines : 0;
@@ -431,8 +564,8 @@ namespace Comfy {
 
 	unsigned long panel_at(int col, int line) {
 		for (unsigned long i = 0; i < static_cast<unsigned long>(shown); ++i) {
-			if (i >= x_vec.size() or i >= y_vec.size() or i >= height_vec.size()) continue;
-			if (col >= x_vec.at(i) and col < x_vec.at(i) + width
+			if (i >= x_vec.size() or i >= y_vec.size() or i >= width_vec.size() or i >= height_vec.size()) continue;
+			if (col >= x_vec.at(i) and col < x_vec.at(i) + width_vec.at(i)
 				and line >= y_vec.at(i) and line < y_vec.at(i) + height_vec.at(i)) {
 				return i;
 			}

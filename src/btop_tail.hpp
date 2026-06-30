@@ -46,9 +46,22 @@ namespace ComfyTail {
 		Errors,
 	};
 
+	struct Progress {
+		bool valid = false;
+		string label;
+		int percent = 0;
+		uint64_t current = 0;
+		uint64_t total = 0;
+		string elapsed;
+		string eta;
+		string rate;
+	};
+
 	struct Line {
 		string text;
 		Severity severity = Severity::Normal;
+		bool live = false;
+		Progress progress;
 	};
 
 	struct Snapshot {
@@ -63,6 +76,7 @@ namespace ComfyTail {
 	[[nodiscard]] string scrub_line(std::string_view raw);
 	[[nodiscard]] Severity classify_line(std::string_view clean);
 	[[nodiscard]] bool visible_in_view(Severity severity, View view);
+	[[nodiscard]] Progress parse_progress_line(std::string_view clean);
 
 	class TailReader {
 	public:
@@ -74,11 +88,15 @@ namespace ComfyTail {
 		uintmax_t offset = 0;
 		bool initialized = false;
 		bool traceback_active = false;
+		bool live_active = false;
+		string live_line;
 		string partial;
 		std::deque<Line> history;
 
 		void ingest(std::string_view chunk);
 		void append_line(string raw_line);
+		[[nodiscard]] Line build_live_line() const;
+		[[nodiscard]] bool has_live_line() const;
 		[[nodiscard]] Snapshot snapshot(View view, size_t max_lines, string status = "", size_t scroll_offset = 0) const;
 	};
 }
