@@ -39,6 +39,7 @@ TEST(comfy_tail, scrub_removes_terminal_control_garbage) {
 	EXPECT_EQ(ComfyTail::scrub_line("abc\bZ"), "abZ");
 	EXPECT_EQ(ComfyTail::scrub_line(std::string{"a\0b\tc", 5}), "ab c");
 	EXPECT_EQ(ComfyTail::scrub_line(std::string{"bad \xC3(", 6}), "bad \xEF\xBF\xBD(");
+	EXPECT_EQ(ComfyTail::scrub_line("[INFO] Requested to load Gemma4TEmodel_"), "Requested to load Gemma4TEmodel_");
 }
 
 TEST(comfy_tail, classification_precedence_keeps_fatal_visible) {
@@ -55,7 +56,7 @@ TEST(comfy_tail, classification_precedence_keeps_fatal_visible) {
 
 TEST(comfy_tail, reader_tails_appends_and_filters_views) {
 	const auto path = workspace() / "append.log";
-	write_file(path, "normal\nFETCH ComfyRegistry Data\n][ MP:detach | id=abc\nRuntimeError: boom\n");
+	write_file(path, "[INFO] normal\nFETCH ComfyRegistry Data\n][ MP:detach | id=abc\nRuntimeError: boom\n");
 
 	ComfyTail::TailReader reader;
 	auto clean = reader.read(path, ComfyTail::View::Clean, 10);

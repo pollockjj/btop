@@ -272,6 +272,8 @@ namespace ComfyTail {
 		string repaired;
 		repaired.reserve(stripped.size());
 		append_utf8_repaired(repaired, stripped);
+		if (repaired.starts_with("[INFO] "))
+			repaired.erase(0, 7);
 		return repaired;
 	}
 
