@@ -564,6 +564,17 @@ namespace Cpu {
 	vector<Draw::Graph> gpu_temp_graphs;
 	vector<Draw::Graph> gpu_mem_graphs;
 
+#if defined(GPU_SUPPORT)
+	namespace {
+		[[nodiscard]] string gpu_label(const unsigned long index) {
+			auto name = Config::getS("custom_gpu_name" + to_string(index));
+			if (name.empty())
+				name = "GPU" + to_string(index);
+			return name;
+		}
+	}
+#endif
+
     string draw(
 		const cpu_info& cpu,
 #if defined(GPU_SUPPORT)
@@ -711,7 +722,8 @@ namespace Cpu {
 					auto& gpu = gpus[i];
 
 					//? GPU graphs/meters
-					auto width_left = b_width - 10 - (gpus.size() > 9 ? 2 : gpus.size() > 1 ? 1 : 0);
+					const int label_width = static_cast<int>(ulen(gpu_label(i), true));
+					auto width_left = b_width - 10 - max(0, label_width - 4);
 					if (gpu.supported_functions.temp_info and show_temps) {
 						gpu_temp_graphs[i] = Draw::Graph{ gpu_graph_width, 1, "temp", gpu.temp, graph_symbol, false, false, gpu.temp_max, -23 };
 						width_left -= 11;
@@ -824,9 +836,10 @@ namespace Cpu {
 								continue;
 							}
 							if (Gpu::count - (gpu_auto ? Gpu::shown : 0) > 1) {
-								auto i_str = to_string(i);
-								out += Mv::l(max(0, graph_width-1)) + Mv::u(graph_height/2) + (graph_width > 5 ? "GPU" : "") + i_str
-									+ Mv::d(graph_height/2) + Mv::r(max(0, (int)(graph_width - 1 - (graph_width > 5)*3 - i_str.size())));
+								auto label = uresize(gpu_label(i), max(1, graph_width - 1));
+								const int label_width = static_cast<int>(ulen(label, true));
+								out += Mv::l(max(0, graph_width-1)) + Mv::u(graph_height/2) + label
+									+ Mv::d(graph_height/2) + Mv::r(max(0, graph_width - 1 - label_width));
 							}
 
 							if (++gpu_drawn < Gpu::count - (gpu_auto ? Gpu::shown : 0))
@@ -978,8 +991,7 @@ namespace Cpu {
 			for (unsigned long i = 0; i < gpus.size(); ++i) {
 				if (gpu_auto and v_contains(Gpu::shown_panels, i))
 					continue;
-				out += Mv::to(b_y + ++cy, b_x + 1) + Theme::c("main_fg") + Fx::b + "GPU";
-				if (gpus.size() > 1) out += rjust(to_string(i), 1 + (gpus.size() > 9));
+				out += Mv::to(b_y + ++cy, b_x + 1) + Theme::c("main_fg") + Fx::b + gpu_label(i);
 				if (gpus[i].supported_functions.gpu_utilization) {
 					out += ' ';
 					if (b_columns > 1) {
